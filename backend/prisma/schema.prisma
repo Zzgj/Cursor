@@ -1,0 +1,114 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id              Int       @id @default(autoincrement())
+  username        String    @unique
+  password        String
+  realName        String
+  role            String    @default("admin") // super_admin | admin | viewer
+  isActive        Boolean   @default(true)
+  mustChangePass  Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  operationLogs   OperationLog[]
+  assetRecords    AssetRecord[]
+}
+
+model Department {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique
+  sortOrder Int       @default(0)
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  assetRecords AssetRecord[]
+  assets       Asset[]
+}
+
+model Asset {
+  id              Int       @id @default(autoincrement())
+  assetCode       String    @unique
+  deviceType      String    @default("laptop") // laptop | desktop | aio | server
+  brand           String
+  model           String
+  serialNumber    String    @unique
+  os              String?
+  cpu             String?
+  memory          String?
+  storage         String?
+  status          String    @default("in_stock") // in_stock | waiting_pickup | in_use | borrowed | in_repair | retired
+  currentUserName String?
+  departmentId    Int?
+  purchaseDate    DateTime?
+  warrantyExpiry  DateTime?
+  remark          String?
+  version         Int       @default(1)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  department      Department? @relation(fields: [departmentId], references: [id])
+  records         AssetRecord[]
+  repairRecords   RepairRecord[]
+}
+
+model AssetRecord {
+  id                  Int       @id @default(autoincrement())
+  assetId             Int
+  action              String    // stock_in | assign | cancel_assign | pick_up | check_out | lend | return | transfer | repair | repair_done | retire
+  userName            String?
+  departmentId        Int?
+  actionDate          DateTime  @default(now())
+  expectedReturnDate  DateTime?
+  proofImage          String?
+  remark              String?
+  operatorId          Int
+  requestId           String?   @unique
+  createdAt           DateTime  @default(now())
+
+  asset               Asset      @relation(fields: [assetId], references: [id])
+  department          Department? @relation(fields: [departmentId], references: [id])
+  operator            User       @relation(fields: [operatorId], references: [id])
+}
+
+model RepairRecord {
+  id               Int       @id @default(autoincrement())
+  assetId          Int
+  faultDescription String
+  repairVendor     String?
+  repairCost       Float?
+  repairResult     String?   // fixed | unfixable
+  startDate        DateTime  @default(now())
+  endDate          DateTime?
+  remark           String?
+  createdAt        DateTime  @default(now())
+
+  asset            Asset     @relation(fields: [assetId], references: [id])
+}
+
+model SystemConfig {
+  id          Int     @id @default(autoincrement())
+  configKey   String  @unique
+  configValue String
+  description String?
+}
+
+model OperationLog {
+  id         Int      @id @default(autoincrement())
+  operatorId Int
+  action     String
+  targetType String
+  targetId   Int?
+  detail     String?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  operator   User     @relation(fields: [operatorId], references: [id])
+}
