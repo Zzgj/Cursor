@@ -1,48 +1,608 @@
-# computer-asset
+# 电脑资产管理系统 — 第一版功能文档
 
-This template should help get you started developing with Vue 3 in Vite.
+---
 
-## Recommended IDE Setup
+## 一、系统概述
 
-[VS Code](https://code.visualstudio.com/) + [Vue (Official)](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur).
+本系统用于管理公司电脑设备的全生命周期：从采购入库、领用出库、借用归还、部门调拨、维修到报废，实现资产流转可追溯、操作人可追踪、库存状态实时可视。
 
-## Recommended Browser Setup
+---
 
-- Chromium-based browsers (Chrome, Edge, Brave, etc.):
-  - [Vue.js devtools](https://chromewebstore.google.com/detail/vuejs-devtools/nhdogjmejiglipccpnnnanhbledajbpd)
-  - [Turn on Custom Object Formatter in Chrome DevTools](http://bit.ly/object-formatters)
-- Firefox:
-  - [Vue.js devtools](https://addons.mozilla.org/en-US/firefox/addon/vue-js-devtools/)
-  - [Turn on Custom Object Formatter in Firefox DevTools](https://fxdx.dev/firefox-devtools-custom-object-formatters/)
+## 二、技术架构
 
-## Type Support for `.vue` Imports in TS
+| 层级 | 技术选型 | 版本 | 说明 |
+|---|---|---|---|
+| **前端** | Vue 3 + TypeScript | v3.5 | 组合式 API (Composition API) |
+| **UI 组件库** | Element Plus | v2.13 | 企业级管理后台组件 |
+| **图表** | ECharts + vue-echarts | — | 仪表盘统计图表 |
+| **构建工具** | Vite | v8.0 | 快速构建与热更新 |
+| **后端** | Node.js + Express | v24 LTS / v5.2 | RESTful API |
+| **ORM** | Prisma | v7.5 | 类型安全的数据库操作 |
+| **数据库** | SQLite（开发）/ MySQL（生产） | — | Prisma 一行配置切换 |
+| **认证** | JWT | — | Token 鉴权 |
+| **部署目标** | Windows | — | 单端口部署（后端托管前端静态文件） |
 
-TypeScript cannot handle type information for `.vue` imports by default, so we replace the `tsc` CLI with `vue-tsc` for type checking. In editors, we need [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar) to make the TypeScript language service aware of `.vue` types.
+---
 
-## Customize configuration
+## 三、数据库模型（8 张表）
 
-See [Vite Configuration Reference](https://vite.dev/config/).
+### 3.1 用户表 (`User`)
 
-## Project Setup
+管理系统操作员账号。
 
-```sh
-pnpm install
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | 主键自增 | — |
+| username | string, 唯一 | 登录账号 |
+| password | string | 密码（bcrypt 加密） |
+| realName | string | 真实姓名 |
+| role | enum | `super_admin` 超级管理员 / `admin` 资产管理员 / `viewer` 只读用户 |
+| isActive | boolean | 是否启用 |
+| mustChangePass | boolean | 首次登录是否强制改密码 |
+
+### 3.2 部门表 (`Department`)
+
+预设部门名称，出库时下拉选择。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | 主键自增 | — |
+| name | string, 唯一 | 部门名称 |
+| sortOrder | int | 排序序号（控制下拉顺序） |
+| isActive | boolean | 是否启用（停用后下拉不显示，历史数据保留） |
+
+### 3.3 设备型号模板表 (`AssetTemplate`)
+
+预设公司常用的电脑型号及其配置参数。入库时选择模板即可自动填充品牌、型号、配置等字段，避免重复手动输入。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | 主键自增 | — |
+| name | string, 唯一 | 模板名称（如「戴尔3440 标配」「HP 640 高配」） |
+| deviceType | enum | `laptop` 笔记本 / `desktop` 台式机 / `aio` 一体机 / `server` 服务器 |
+| brand | string | 品牌（如 戴尔、HP、联想） |
+| model | string | 型号（如 Vostro3440、EliteBook 640） |
+| os | string | 操作系统（如 win10专业版） |
+| cpu | string | CPU（如 i5-1345U） |
+| memory | string | 内存（如 16G） |
+| storage | string | 存储（如 ssd512G） |
+| remark | string | 模板备注 |
+| isActive | boolean | 是否启用（停用后入库时不再显示） |
+| sortOrder | int | 排序序号 |
+
+**使用场景举例：**
+
+```
+管理员提前在「型号管理」中设置好：
+
+模板1: 戴尔3440 标配  → 戴尔 / Vostro3440 / win10专业版 / i5-1345U / 16G / ssd512G
+模板2: 戴尔3440 高配  → 戴尔 / Vostro3440 / win10专业版 / i7-1365U / 32G / ssd1T
+模板3: HP 640        → HP / EliteBook 640 / win10专业版 / i5-1335U / 16G / ssd512G
+模板4: 戴尔3420       → 戴尔 / Vostro3420 / win10专业版 / i5-1145G7 / 16G / ssd1T
+
+入库时：
+  选择型号：[戴尔3440 标配  ▼]  ← 下拉选择，自动填充以下所有字段
+                ├ 戴尔3440 标配
+                ├ 戴尔3440 高配
+                ├ HP 640
+                └ 戴尔3420
+  品牌：    戴尔          ← 自动填充，仍可手动修改
+  型号：    Vostro3440    ← 自动填充
+  操作系统：win10专业版    ← 自动填充
+  CPU：     i5-1345U      ← 自动填充
+  内存：    16G           ← 自动填充
+  存储：    ssd512G       ← 自动填充
+  电脑编号：[NX-PC-2603-005]  ← 需手动输入或自动生成
+  序列号：  [____________]     ← 需手动输入（每台唯一）
 ```
 
-### Compile and Hot-Reload for Development
+### 3.4 资产表 (`Asset`)
 
-```sh
-pnpm dev
+核心表，对应每一台电脑。
+
+| 字段 | 类型 | 说明 | 对应现有表格 |
+|---|---|---|---|
+| id | 主键自增 | — | — |
+| assetCode | string, 唯一 | 电脑编号 | `NX-PC-2505-001` |
+| templateId | 外键 → AssetTemplate | 关联型号模板（可选，记录该电脑基于哪个模板创建） | — |
+| deviceType | enum | `laptop` 笔记本 / `desktop` 台式机 / `aio` 一体机 / `server` 服务器 | 设备类型 |
+| brand | string | 品牌 | 戴尔、HP |
+| model | string | 型号 | Vostro3420 |
+| serialNumber | string, 唯一 | 序列号 | 序列号(EX) |
+| os | string | 操作系统 | win10专业版 |
+| cpu | string | CPU | i5-1145G7 |
+| memory | string | 内存 | 16G |
+| storage | string | 存储 | ssd1T |
+| status | enum | 见下方状态枚举 | 设备状态 |
+| currentUserName | string | 当前使用人 | 现定人 |
+| departmentId | 外键 | 当前所属部门 | 部门 |
+| purchaseDate | date | 采购日期 | — |
+| warrantyExpiry | date | 保修到期日（预留字段，后续迭代使用） | — |
+| remark | text | 备注 | 备注 |
+| version | int, 默认1 | 乐观锁版本号（并发安全） | — |
+
+> **说明**：Asset 表中的 brand/model/os/cpu/memory/storage 是从模板复制过来的独立副本，选择模板后自动填入但可手动修改。修改模板不会影响已入库的资产数据。
+
+**状态枚举（6 种）：**
+
+| 状态值 | 中文 | 说明 |
+|---|---|---|
+| `in_stock` | 在库 | 在库房中，可分配 |
+| `waiting_pickup` | 待领用 | 已分配给某人，等待来取 |
+| `in_use` | 使用中 | 已被领用，正常使用 |
+| `borrowed` | 借用中 | 临时借出，有归还期限 |
+| `in_repair` | 维修中 | 正在维修 |
+| `retired` | 已报废 | 终态 |
+
+### 3.5 出入库记录表 (`AssetRecord`)
+
+记录每台电脑的每一次流转操作，是追踪「曾用人」和完整历史的核心。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | 主键自增 | — |
+| assetId | 外键 → Asset | 关联哪台电脑 |
+| action | enum | 操作类型（见下方枚举） |
+| userName | string | 领用人/归还人/借用人 |
+| departmentId | 外键 → Department | 相关部门 |
+| actionDate | datetime | 操作时间 |
+| expectedReturnDate | date | 借用时的预计归还日期 |
+| proofImage | string | 凭证图片路径 |
+| remark | string | 本次操作备注 |
+| operatorId | 外键 → User | **谁录入的这条记录**（追踪操作人） |
+| requestId | string, 唯一 | 幂等性请求ID（防重复提交） |
+
+**操作类型枚举（11 种）：**
+
+| action 值 | 中文 | 状态变化 |
+|---|---|---|
+| `stock_in` | 入库 | → 在库 |
+| `assign` | 分配 | 在库 → 待领用 |
+| `cancel_assign` | 取消分配 | 待领用 → 在库 |
+| `pick_up` | 确认领用 | 待领用 → 使用中 |
+| `check_out` | 出库（直接领用） | 在库 → 使用中 |
+| `lend` | 借出 | 在库 → 借用中 |
+| `return` | 归还 | 使用中/借用中 → 在库 |
+| `transfer` | 调拨 | 使用中 → 使用中（换人换部门） |
+| `repair` | 送修 | 任意 → 维修中 |
+| `repair_done` | 维修完成 | 维修中 → 在库 |
+| `retire` | 报废 | 任意 → 已报废 |
+
+### 3.6 维修记录表 (`RepairRecord`)
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | 主键自增 | — |
+| assetId | 外键 → Asset | 关联电脑 |
+| faultDescription | string | 故障描述（如：屏幕不亮、键盘失灵） |
+| repairVendor | string | 维修商/维修人 |
+| repairCost | float | 维修费用 |
+| repairResult | enum | `fixed` 已修复 / `unfixable` 无法修复 |
+| startDate | datetime | 送修日期 |
+| endDate | datetime | 修好日期 |
+| remark | string | 备注 |
+
+### 3.7 系统配置表 (`SystemConfig`)
+
+以 key-value 形式存储可开关的业务规则。
+
+| config_key | 默认值 | 说明 |
+|---|---|---|
+| `one_person_one_device` | `true` | 一人一机规则开关 |
+| `default_borrow_days` | `7` | 默认借用天数 |
+| `waiting_pickup_alert_days` | `3` | 待领用超时提醒天数 |
+| `borrow_advance_alert_days` | `1` | 借用到期提前提醒天数 |
+
+### 3.8 操作日志表 (`OperationLog`)
+
+审计用途，记录谁在什么时间做了什么。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | 主键自增 | — |
+| operatorId | 外键 → User | 操作人 |
+| action | string | 操作描述（如：新增资产、出库、归还） |
+| targetType | string | 操作对象类型（Asset / User / Department 等） |
+| targetId | int | 操作对象 ID |
+| detail | JSON text | 变更详情（改前改后的值） |
+| ipAddress | string | 操作 IP |
+
+---
+
+## 四、功能模块清单
+
+### 4.1 登录与认证
+
+| 功能 | 说明 |
+|---|---|
+| 登录 | 用户名 + 密码登录，JWT Token 鉴权，24小时有效 |
+| 修改密码 | 用户自行修改密码（需输入旧密码） |
+| 重置密码 | 超级管理员可将他人密码重置为默认值 |
+| 权限控制 | 三级角色：超级管理员（全部权限）/ 管理员（资产操作）/ 只读用户（仅查看） |
+
+### 4.2 仪表盘（首页）
+
+| 功能 | 说明 |
+|---|---|
+| **统计卡片** | 显示：资产总数、在库数量、使用中、借用中、待领用、维修中 |
+| **状态分布饼图** | 各状态占比可视化 |
+| **部门分布柱状图** | 各部门领用/借用数量对比 |
+| **提醒通知** | 借用超期未归还（红色告警）+ 借用即将到期（黄色提醒）+ 待领用超时（蓝色提示） |
+| **最近操作记录** | 最近 10 条出入库记录列表 |
+
+### 4.3 资产管理
+
+| 功能 | 说明 |
+|---|---|
+| 资产列表 | 表格展示所有电脑，支持按编号/品牌/型号/序列号/使用人搜索，支持按状态/部门筛选，分页 |
+| 新增入库 | 可选择预设的设备型号模板自动填充品牌、型号、配置等参数，也可手动填写；支持电脑编号自动生成（`NX-PC-YYMM-SEQ` 规则），入库同时创建入库记录 |
+| 编辑资产 | 修改电脑基本信息（品牌、型号、配置、备注等），乐观锁防止并发覆盖 |
+| 删除资产 | 仅超级管理员可操作，且仅「在库」或「已报废」状态可删除 |
+| 资产详情 | 完整信息展示 + **曾用人列表** + **流转历史时间线** + 维修记录 |
+
+### 4.4 出库与借用
+
+| 功能 | 说明 |
+|---|---|
+| 直接领用（出库） | 选择在库电脑 → 填写领用人 → 选择部门（下拉） → 确认出库，状态变为「使用中」 |
+| 分配（待领用） | 电脑装好系统分配给某人，状态变为「待领用」；领用人来取后点击「确认领用」变为「使用中」 |
+| 取消分配 | 待领用状态下可取消分配，回到「在库」 |
+| 借出 | 选择在库电脑 → 填写借用人 → 选择部门 → 设置预计归还日期（默认+7天），状态变为「借用中」 |
+| **冲突检测** | 出库/借出时，若一人一机规则开启且该人已持有电脑，弹窗警告可选「继续」或「取消」 |
+| **幂等性** | 每次操作携带唯一 requestId，防止网络问题导致重复提交 |
+
+### 4.5 归还
+
+| 功能 | 说明 |
+|---|---|
+| 归还登记 | 选择使用中/借用中的电脑 → 确认归还，状态回到「在库」，清除当前使用人和部门 |
+
+### 4.6 调拨（部门间转移）
+
+| 功能 | 说明 |
+|---|---|
+| 调拨 | 使用中的电脑直接从 A 转给 B，无需先归还再领用。记录旧使用人和新使用人 |
+
+### 4.7 维修管理
+
+| 功能 | 说明 |
+|---|---|
+| 送修 | 填写故障描述和维修商，状态变为「维修中」，创建维修记录 |
+| 维修完成 | 填写维修费用和结果。已修复 → 回到「在库」；无法修复 → 自动转为「已报废」 |
+
+### 4.8 报废
+
+| 功能 | 说明 |
+|---|---|
+| 报废 | 填写报废原因，状态变为「已报废」（终态） |
+
+### 4.9 超期提醒机制
+
+| 提醒类型 | 触发条件 | 展示方式 |
+|---|---|---|
+| 借用超期 | 当前日期 > 预计归还日期，且电脑仍为「借用中」 | 仪表盘红色告警 + 顶部导航栏数字角标 |
+| 借用即将到期 | 距离归还日期 ≤ N 天（默认1天） | 仪表盘黄色提醒 |
+| 待领用超时 | 分配后超过 N 天（默认3天）未来领取 | 仪表盘蓝色提示 |
+
+### 4.10 部门管理
+
+| 功能 | 说明 |
+|---|---|
+| 部门列表 | 查看所有部门，显示启用/停用状态 |
+| 新增/编辑部门 | 输入部门名称和排序号 |
+| 停用/启用 | 停用后出库表单不再显示该部门，但已有数据不受影响 |
+| 删除部门 | 仅当该部门下无关联资产时可删除 |
+
+### 4.11 用户管理（仅超级管理员）
+
+| 功能 | 说明 |
+|---|---|
+| 用户列表 | 查看所有操作员账号 |
+| 新增用户 | 设置用户名、初始密码、姓名、角色 |
+| 编辑用户 | 修改姓名、角色 |
+| 重置密码 | 将密码重置为默认值（123456），用户下次登录后自行修改 |
+| 停用/启用 | 停用后该账号无法登录 |
+
+### 4.12 系统配置（仅超级管理员）
+
+| 配置项 | 说明 |
+|---|---|
+| 一人一机规则 | 开关，开启后出库时检查冲突 |
+| 默认借用天数 | 借出时若未指定归还日期，默认加 N 天 |
+| 待领用超时天数 | 超过 N 天未领取则仪表盘提醒 |
+| 借用提前提醒天数 | 到期前 N 天开始提醒 |
+
+### 4.13 操作日志
+
+| 功能 | 说明 |
+|---|---|
+| 日志列表 | 查看所有管理员的操作记录，显示操作人、操作类型、对象、详情、IP、时间 |
+| 筛选 | 按操作类型、时间范围筛选 |
+| 分页 | 支持分页浏览 |
+
+### 4.14 设备型号管理
+
+| 功能 | 说明 |
+|---|---|
+| 型号模板列表 | 查看所有预设的电脑型号模板，显示品牌、型号、配置摘要、启用状态 |
+| 新增型号模板 | 输入模板名称、品牌、型号、操作系统、CPU、内存、存储等参数 |
+| 编辑型号模板 | 修改模板信息（不影响已入库的资产） |
+| 停用/启用 | 停用后入库时不再显示该模板，但已入库的关联数据不受影响 |
+| 删除型号模板 | 删除不再使用的模板 |
+
+### 4.15 Excel 导入导出
+
+| 功能 | 说明 |
+|---|---|
+| 导入 | 上传 .xlsx/.xls/.csv 文件，自动识别现有表格列名（电脑编号、型号、序列号、配置、现定人、部门、设备状态等），批量导入资产数据，自动创建缺失的部门 |
+| 导出资产清单 | 导出所有电脑信息为 Excel |
+| 导出出入库记录 | 按时间范围导出操作记录为 Excel |
+
+### 4.16 数据备份（仅超级管理员）
+
+| 功能 | 说明 |
+|---|---|
+| 立即备份 | 一键备份数据库文件 |
+| 备份列表 | 查看历史备份，显示文件名、大小、时间 |
+| 下载备份 | 下载备份文件到本地 |
+
+---
+
+## 五、并发安全机制
+
+| 机制 | 层级 | 解决的问题 |
+|---|---|---|
+| 数据库事务 + 条件更新 | 数据库 | 两人同时出库同一台电脑 |
+| 乐观锁（version 字段） | 应用 | 两人同时编辑同一条资产信息 |
+| 唯一约束 | 数据库 | 电脑编号、序列号重复 |
+| 请求幂等（requestId） | 接口 | 网络抖动导致重复提交 |
+| 按钮 loading 状态 | 前端 | 用户手快连续点击 |
+
+---
+
+## 六、状态流转图
+
+```
+                          ┌──────────┐
+         采购到货 ──────→ │   在库    │ ←───────────────────┐
+                          └────┬─────┘                      │
+                               │                            │
+              ┌────────────────┼─────────────┐              │
+              ▼                ▼              ▼              │
+       ┌───────────┐    ┌──────────┐   ┌──────────┐        │
+       │  待领用    │    │  领用     │   │  借出     │        │
+       └─────┬─────┘    └────┬─────┘   └────┬─────┘        │
+             │               │              │               │
+        确认领用             │         ┌────┴────┐          │
+             │               ▼         ▼         ▼          │
+             │         ┌──────────┐ ┌──────────┐            │
+             └───────→ │  使用中   │ │  借用中   │→超期提醒  │
+                       └────┬─────┘ └────┬─────┘           │
+                            │            │                  │
+                    归还/调拨         借用归还               │
+                            └──────┬─────┘                  │
+                                   ▼                        │
+                              ┌─────────┐                   │
+                              │  归还    │──────────────────┘
+                              └─────────┘
+                                   │
+                               送去维修
+                                   ▼
+                            ┌──────────┐       ┌──────────┐
+                            │  维修中   │─修好→ │   在库    │
+                            └──────────┘       └──────────┘
+                                   │
+                              无法修复
+                                   ▼
+                            ┌──────────┐
+                            │  已报废   │（终态）
+                            └──────────┘
 ```
 
-### Type-Check, Compile and Minify for Production
+---
 
-```sh
-pnpm build
+## 七、页面清单（15 个页面）
+
+| 页面 | 路径 | 权限 |
+|---|---|---|
+| 登录 | `/login` | 公开 |
+| 仪表盘 | `/dashboard` | 所有登录用户 |
+| 资产列表 | `/assets` | 所有登录用户 |
+| 资产详情 | `/assets/:id` | 所有登录用户 |
+| 入库登记 | `/stock-in` | 管理员+ |
+| 出库/借用 | `/stock-out` | 管理员+ |
+| 归还登记 | `/return` | 管理员+ |
+| 出入库记录 | `/records` | 所有登录用户 |
+| 设备型号管理 | `/templates` | 管理员+ |
+| 部门管理 | `/departments` | 管理员+ |
+| 用户管理 | `/users` | 仅超级管理员 |
+| 系统配置 | `/config` | 仅超级管理员 |
+| 操作日志 | `/logs` | 所有登录用户 |
+| 导入导出 | `/import` | 管理员+ |
+| 数据备份 | `/backup` | 仅超级管理员 |
+
+---
+
+## 八、API 接口清单
+
+### 认证模块 `/api/auth`
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/login` | 登录 |
+| POST | `/change-password` | 修改密码 |
+| GET | `/me` | 获取当前用户信息 |
+
+### 用户管理 `/api/users`
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/` | 用户列表 |
+| POST | `/` | 新增用户 |
+| PUT | `/:id` | 编辑用户 |
+| POST | `/:id/reset-password` | 重置密码 |
+
+### 部门管理 `/api/departments`
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/` | 部门列表 |
+| POST | `/` | 新增部门 |
+| PUT | `/:id` | 编辑部门 |
+| DELETE | `/:id` | 删除部门 |
+
+### 设备型号模板 `/api/templates`
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/` | 模板列表（入库页面调用，仅返回启用的模板） |
+| GET | `/all` | 全部模板列表（管理页面调用，包含停用的） |
+| POST | `/` | 新增模板 |
+| PUT | `/:id` | 编辑模板 |
+| DELETE | `/:id` | 删除模板 |
+
+### 资产管理 `/api/assets`
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/` | 资产列表（支持搜索、筛选、分页） |
+| GET | `/generate-code` | 自动生成电脑编号 |
+| GET | `/:id` | 资产详情 |
+| GET | `/:id/records` | 该资产的流转记录 |
+| GET | `/:id/repairs` | 该资产的维修记录 |
+| POST | `/` | 新增资产并入库 |
+| PUT | `/:id` | 编辑资产信息（含乐观锁） |
+| DELETE | `/:id` | 删除资产 |
+
+### 操作模块 `/api/operations`
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/check-out` | 出库（直接领用） |
+| POST | `/assign` | 分配（待领用） |
+| POST | `/cancel-assign` | 取消分配 |
+| POST | `/pick-up` | 确认领用 |
+| POST | `/lend` | 借出 |
+| POST | `/return` | 归还 |
+| POST | `/transfer` | 调拨 |
+| POST | `/repair` | 送修 |
+| POST | `/repair-done` | 维修完成 |
+| POST | `/retire` | 报废 |
+
+### 仪表盘 `/api/dashboard`
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/stats` | 统计数据（总数、各状态数、部门分布、设备类型分布） |
+| GET | `/recent-records` | 最近 10 条操作记录 |
+| GET | `/notifications` | 提醒通知（超期借用、即将到期、待领用超时） |
+
+### 系统配置 `/api/config`
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/` | 获取所有配置 |
+| PUT | `/` | 更新配置 |
+
+### 操作日志 `/api/logs`
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/` | 日志列表（支持筛选、分页） |
+
+### Excel 导入导出 `/api/excel`
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/import` | 导入 Excel 文件 |
+| GET | `/export?type=assets` | 导出资产清单 |
+| GET | `/export?type=records` | 导出出入库记录 |
+
+### 数据备份 `/api/backup`
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/` | 创建备份 |
+| GET | `/list` | 备份列表 |
+| GET | `/download/:name` | 下载备份文件 |
+
+---
+
+## 九、预设数据
+
+### 默认管理员账号
+
+| 用户名 | 密码 | 角色 |
+|---|---|---|
+| admin | admin123 | 超级管理员 |
+
+### 预设部门
+
+编辑事业部、电互联实验中心、信息部门、财务部门、综合事业部、培训教室、领导事业部
+
+### 预设设备型号模板（示例，可在系统中自行增删改）
+
+| 模板名称 | 品牌 | 型号 | 操作系统 | CPU | 内存 | 存储 |
+|---|---|---|---|---|---|---|
+| 戴尔3440 标配 | 戴尔 | Vostro3440 | win10专业版 | i5-1345U | 16G | ssd512G |
+| 戴尔3420 | 戴尔 | Vostro3420 | win10专业版 | i5-1145G7 | 16G | ssd1T |
+| HP 640 | HP | EliteBook 640 | win10专业版 | i5-1335U | 16G | ssd1T |
+| 戴尔Latitude 3420 | 戴尔 | Latitude3420 | win10专业版 | i3-1115G4 | 8G | ssd128G+1T |
+| 戴尔Latitude 5420 | 戴尔 | Latitude5420 | win10专业版 | i3-10110U | 16G | ssd128G+1T |
+| Dell Vostro 3420 | Dell | Vostro 3420 | win10专业版 | i3-1135G7 | 16G | ssd1T |
+
+### 编号自动生成规则
+
+```
+NX-PC-{年份后两位}{月份两位}-{三位递增序号}
+例：NX-PC-2603-001、NX-PC-2603-002
 ```
 
-### Lint with [ESLint](https://eslint.org/)
+---
 
-```sh
-pnpm lint
+## 十、数据关系图
+
 ```
+┌──────────────┐     ┌──────────────────┐     ┌──────────────┐     ┌────────────────┐
+│   User       │     │   AssetRecord    │     │   Asset      │     │ AssetTemplate  │
+│──────────────│     │──────────────────│     │──────────────│     │────────────────│
+│ id           │◄────│ operatorId       │     │ id           │     │ id             │
+│ username     │     │ assetId ─────────│────►│ assetCode    │     │ name           │
+│ password     │     │ action           │     │ templateId ──│────►│ brand          │
+│ realName     │     │ userName         │     │ deviceType   │     │ model          │
+│ role         │     │ departmentId ──┐ │     │ brand/model  │     │ os/cpu/memory  │
+└──────┬───────┘     │ actionDate     │ │     │ serialNumber │     │ storage        │
+       │             │ expectedReturn │ │     │ status       │     │ isActive       │
+       │             │ remark         │ │     │ currentUser  │     └────────────────┘
+       │             └────────────────┘ │     │ departmentId │
+       │                                │     │ remark       │
+       │                                │     │ version      │
+       │                                │     └──────┬───────┘
+       │                                │            │
+       │  ┌──────────────┐              │     ┌──────┴───────┐
+       │  │ OperationLog │              │     │ RepairRecord │
+       │  │──────────────│              │     │──────────────│
+       └─►│ operatorId   │              │     │ assetId      │
+          │ action       │              │     │ faultDesc    │
+          │ targetType   │              │     │ repairVendor │
+          │ detail       │              │     │ repairCost   │
+          └──────────────┘              │     │ repairResult │
+                                        │     └──────────────┘
+                              ┌─────────┴──┐
+                              │ Department │  ┌──────────────┐
+                              │────────────│  │ SystemConfig │
+                              │ id         │  │──────────────│
+                              │ name       │  │ configKey    │
+                              │ sortOrder  │  │ configValue  │
+                              │ isActive   │  │ description  │
+                              └────────────┘  └──────────────┘
+```
+
+---
+
+## 十一、后续迭代（不在第一版范围内）
+
+| 功能 | 说明 |
+|---|---|
+| 保修到期提醒 | Asset 表已预留 warrantyExpiry 字段，后续加到提醒体系中 |
+| 批量入库 | Excel 导入已支持批量，后续可做表单化批量添加 |
+| 报废审批详情 | 增加审批人、审批流程 |
+| 日志清理策略 | 自动归档/清理超过指定时间的操作日志 |
+
+---
+
+## 十二、部署说明（Windows）
+
+1. 安装 Node.js v24 LTS
+2. 安装 MySQL（可选，开发阶段可用 SQLite）
+3. 后端启动后同时托管前端静态文件，单端口访问（默认 3000）
+4. 生产部署可使用 pm2 进程管理器保持后台运行
